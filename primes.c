@@ -10,10 +10,7 @@
 
  sem_t done;
  pthread_mutex_t mut=PTHREAD_MUTEX_INITIALIZER;
- int *primes, *numPrimes;
- int N=2;
- 
- 
+ int *primes, *numPrimes, *N;
 //------------------------------------------------------------------------------------------ 
 // Type of the circular queue elements 
  
@@ -34,15 +31,13 @@ typedef struct
  pthread_mutex_t mutex; 
 } CircularQueue; 
  
- 
 //------------------------------------------------------------------------------------------ 
 // Allocates space for circular queue 'q' having 'capacity' number of elements 
 // Initializes semaphores & mutex needed to implement the producer-consumer paradigm 
 // Initializes indexes of the head and tail of the queue 
 // TO DO BY STUDENTS: ADD ERROR TESTS TO THE CALLS & RETURN a value INDICATING (UN)SUCESS 
  
-void queue_init(CircularQueue **q, unsigned int capacity) // TO DO: change return value 
-{ 
+void queue_init(CircularQueue **q, unsigned int capacity){ // TO DO: change return value { 
  *q = (CircularQueue *) malloc(sizeof(CircularQueue)); 
  sem_init(&((*q)->empty), 0, capacity); 
  sem_init(&((*q)->full), 0, 0); 
@@ -57,11 +52,21 @@ void queue_init(CircularQueue **q, unsigned int capacity) // TO DO: change retur
 // Inserts 'value' at the tail of queue 'q' 
  
 void queue_put(CircularQueue *q, QueueElem value) { 
+	int testSemF, testSemE;
+	sem_getvalue(&(q->full), &testSemF);
+	sem_getvalue(&(q->empty), &testSemE);
+	//printf("queue_put, semF=%d, semE=%d, value=%d\n", testSemF, testSemE, (int) value);
 	sem_wait(&(q->empty));
+	pthread_mutex_lock(&(q->mutex));
 	q->v[q->last]=value;
 	(q->last)++;
 	(q->last)%=(q->capacity);
+	
+	pthread_mutex_unlock(&(q->mutex));
 	sem_post(&(q->full));
+	sem_getvalue(&(q->full), &testSemF);
+	sem_getvalue(&(q->empty), &testSemE);
+	//printf("queue_put, semF=%d, semE=%d\n", testSemF, testSemE);
 	return;
 } 
  
@@ -69,12 +74,23 @@ void queue_put(CircularQueue *q, QueueElem value) {
 // Removes element at the head of queue 'q' and returns its 'value' 
  
 QueueElem queue_get(CircularQueue *q) {
-	QueueElem value;
+	QueueElem value=0;
+	int testSemF, testSemE;
+	sem_getvalue(&(q->full), &testSemF);
+	sem_getvalue(&(q->empty), &testSemE);
+	//printf("queue_get, semF=%d, semE=%d\n", testSemF, testSemE);
 	sem_wait(&(q->full));
+	
+	pthread_mutex_lock(&(q->mutex));
 	value=q->v[q->first];
-	(q->last)--;
-	(q->last)%=(q->capacity);
+	(q->first)++;
+	(q->first)%=(q->capacity);
+	
+	pthread_mutex_unlock(&(q->mutex));
 	sem_post(&(q->empty));
+	sem_getvalue(&(q->full), &testSemF);
+	sem_getvalue(&(q->empty), &testSemE);
+	//printf("queue_get, semF=%d, semE=%d, value=%d\n", testSemF, testSemE, (int) value);
 	return value;
 } 
  
@@ -82,8 +98,8 @@ QueueElem queue_get(CircularQueue *q) {
 // Frees space allocated for the queue elements and auxiliary management data 
 // Must be called when the queue is no more needed 
  
-void queue_destroy(CircularQueue *q) 
-{ 
+void queue_destroy(CircularQueue *q) { 
+	//TODO
 	free(q);
 } 
 
@@ -91,12 +107,14 @@ void *processer (void *q){
 	pthread_t cid;
 	int temp, prime;
 	
+	//printf("processer start\n");
 	prime=queue_get(q);
 	
-	if(prime>sqrt(N)){
-		while(prime!=0){
+	if(prime>sqrt(*N)){
+		printf("prime>sqrt(n)\n");
+		while(prime>0){
 			pthread_mutex_lock(&mut);
-			primes[(*numPrimes)]=prime;
+			primes[*numPrimes]=prime;
 			(*numPrimes)++;
 			pthread_mutex_unlock(&mut);
 			prime=queue_get(q);
@@ -104,11 +122,11 @@ void *processer (void *q){
 		queue_destroy(q);
 		sem_post(&done);
 	}else{
-		CircularQueue *newData;
+		CircularQueue* newData;
 		queue_init(&newData, 10);
 		pthread_create(&cid, NULL, processer, &newData);
-		temp=1;
-		while(temp!=0){
+		temp=prime;
+		while(temp>0){
 			temp=queue_get(q);
 			if(temp%prime!=0){
 				queue_put(newData, temp);
@@ -118,6 +136,7 @@ void *processer (void *q){
 		queue_destroy(q);
 		pthread_mutex_lock(&mut);
 		primes[*numPrimes]=prime;
+		printf("last prime: %d\n", primes[*numPrimes]);
 		(*numPrimes)++;
 		pthread_mutex_unlock(&mut);
 		pthread_join(cid, NULL); 
@@ -130,20 +149,20 @@ void *starter (void *arg){
 	
 	primes[*numPrimes]=2;
 	(*numPrimes)++;
-	
-	if (N>2){
-		CircularQueue *data;
+	if (2<*N){
+		CircularQueue* data;
 		queue_init(&data, 10);
-		pthread_create(&cid, NULL, processer, &data); 
+		pthread_create(&cid, NULL, processer, data);
 		int i;
-		for(i=3; i<=N; ++i){
+		for(i=3; i<=*N; ++i){
 			if(i%2!=0){
 				queue_put(data, i);
 			}
 		}
 		queue_put(data, 0);
 		pthread_join(cid, NULL); 
-	}else sem_post(&done);
+	}
+	sem_post(&done);
 	return NULL;
 }
 
@@ -153,28 +172,23 @@ int cmpfunc (const void * a, const void * b){
  
  int main(int argc, char *argv[]) { 
 	pthread_t pid; 
- 
-	if (argc != 2 || ( (int) argv[1])<2) { 
+	
+	if (argc != 2 || atoi(argv[1])<2) { 
 		fprintf(stderr,"USAGE: %s numItems [numItems >= 2]\n",argv[0]); 
 		exit(1); 
 	} 
-	N=*argv[1];
+	//allocate shared memory
+	N = malloc(sizeof(int));
+	*N=atoi(argv[1]);
+	primes =  malloc(1.2*(*N)/log(*N));
+	numPrimes = malloc(sizeof(int));
+	*numPrimes=0;
 	
 	//initialize the semaphore
 	sem_init(&done, NOT_SHARED, 0);
 	
-	//allocate shared memory
-	primes =  malloc(1.2*(*argv[1])/log(*argv[1]));
-	numPrimes = malloc(sizeof(int));
-	
-	if (primes == 0 || numPrimes==0){
-		printf("ERROR: Out of memory\n");
-		return 2;
-	}
-	(*numPrimes)=0;
-	
 	//launch the threads
-	pthread_create(&pid, NULL, starter, argv[1]); 
+	pthread_create(&pid, NULL, starter, &N); 
 	sem_wait(&done);
  
 	sem_destroy(&done); 
@@ -183,11 +197,10 @@ int cmpfunc (const void * a, const void * b){
 	//show the results
 	qsort(primes, *numPrimes, sizeof(int), cmpfunc);
 	int i;
-	printf("Primes: %d", primes[0]);
-	for(i=1; i<(*numPrimes); ++i){
-		printf(", %d", primes[i]);
+	printf("Primes between 2 and %d:\n1. %d\n", *N, primes[0]);
+	for(i=1; i<*numPrimes; ++i){
+		printf("%d. %d\n",i+1, primes[i]);
 	}
-	printf("\n");
 	
 	//release shared memory
 	free(primes);
